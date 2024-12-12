@@ -12,7 +12,7 @@
     gitea_bin: "/usr/local/bin/gitea"
     gitea_service: "/etc/systemd/system/gitea.service"
     gitea_config: "/etc/gitea/app.ini"
-    mysql_root_password: "your_root_password"
+    mysql_root_password: "password"
     gitea_db_name: "gitea"
     gitea_db_user: "giteadb"
     gitea_db_password: "password"
