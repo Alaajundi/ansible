@@ -85,9 +85,13 @@
     - name: Set capabilities for Gitea binary
       command: setcap 'cap_net_bind_service=+ep' {{ gitea_bin }}
 
-    - name: Install MySQL server
-      yum:
-        name: mysql-server
+    - name: Install MySQL server and Python MySQL dependencies
+      dnf:  # or use 'yum' for older systems
+        name:
+          - mysql-server
+          - mysql
+          - python3
+          - python3-mysql
         state: present
 
     - name: Start and enable MySQL service
