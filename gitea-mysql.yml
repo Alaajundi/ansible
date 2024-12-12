@@ -174,9 +174,17 @@
       delay: 5
       until: gitea_response.status == 200
 
+    - name: Check if SELinux is installed
+      stat:
+        path: /etc/selinux/config
+      register: selinux_check
+
     - name: Configure SELinux for Gitea
       seboolean:
         name: httpd_can_network_connect
         state: yes
         persistent: yes
-      when: ansible_selinux.status == "enabled"
+      when: 
+        - selinux_check.stat.exists
+        - ansible_selinux is defined
+        - ansible_selinux.status == "enabled"
