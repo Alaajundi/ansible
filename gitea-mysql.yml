@@ -18,15 +18,6 @@
     gitea_db_password: "password"
 
   tasks:
-    - name: Extend logical volume
-      command: lvextend /dev/mapper/root_vg-var_lv -L 150G -r
-
-    - name: Copy Gitea binary from /vol1/gitea
-      copy:
-        src: "/vol1/gitea/gitea-{{ gitea_version }}-linux-amd64"
-        dest: "{{ gitea_bin }}"
-        mode: '0755'
-
     - name: Create git group
       group:
         name: "{{ gitea_group }}"
@@ -86,12 +77,6 @@
     - name: Reload systemd
       command: systemctl daemon-reload
 
-    - name: Enable and start Gitea service
-      systemd:
-        name: gitea
-        enabled: yes
-        state: started
-
     - name: Install libcap
       yum:
         name: libcap
@@ -110,6 +95,17 @@
         name: mysqld
         enabled: yes
         state: started
+
+    - name: Wait for MySQL to be ready
+      wait_for:
+        port: 3306
+        timeout: 30
+
+    - name: Check MySQL service status
+      command: systemctl status mysqld
+      register: mysql_status
+      changed_when: false
+      failed_when: mysql_status.rc != 0
 
     - name: Set MySQL root password
       mysql_user:
@@ -144,7 +140,61 @@
         login_password: "{{ mysql_root_password }}"
         host_all: yes
 
-    - name: Secure Gitea configuration file
-      file:
-        path: "{{ gitea_config }}"
+    - name: Create Gitea configuration file
+      template:
+        dest: "{{ gitea_config }}"
+        owner: "{{ gitea_user }}"
+        group: "{{ gitea_group }}"
         mode: '0660'
+        content: |
+          [database]
+          DB_TYPE  = mysql
+          HOST     = 127.0.0.1:3306
+          NAME     = {{ gitea_db_name }}
+          USER     = {{ gitea_db_user }}
+          PASSWD   = {{ gitea_db_password }}
+          
+          [server]
+          DOMAIN           = localhost
+          HTTP_PORT        = 3000
+          ROOT_URL         = http://localhost:3000/
+          
+          [repository]
+          ROOT = {{ gitea_work_dir }}/repositories
+          
+          [log]
+          ROOT_PATH = {{ gitea_work_dir }}/log
+
+    - name: Enable and start Gitea service
+      systemd:
+        name: gitea
+        enabled: yes
+        state: started
+
+    - name: Wait for Gitea to be ready
+      wait_for:
+        port: 3000
+        timeout: 30
+
+    - name: Check Gitea service status
+      command: systemctl status gitea
+      register: gitea_status
+      changed_when: false
+      failed_when: gitea_status.rc != 0
+
+    - name: Verify Gitea web interface is responding
+      uri:
+        url: http://localhost:3000/
+        return_content: yes
+        status_code: 200
+      register: gitea_response
+      retries: 3
+      delay: 5
+      until: gitea_response.status == 200
+
+    - name: Configure SELinux for Gitea
+      seboolean:
+        name: httpd_can_network_connect
+        state: yes
+        persistent: yes
+      when: ansible_selinux.status == "enabled"
