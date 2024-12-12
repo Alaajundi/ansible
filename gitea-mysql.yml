@@ -1,0 +1,150 @@
+---
+- name: Install Gitea and MySQL
+  hosts: all
+  become: yes
+
+  vars:
+    gitea_version: "1.22.4"
+    gitea_user: "git"
+    gitea_group: "git"
+    gitea_home: "/home/git"
+    gitea_work_dir: "/var/lib/gitea"
+    gitea_bin: "/usr/local/bin/gitea"
+    gitea_service: "/etc/systemd/system/gitea.service"
+    gitea_config: "/etc/gitea/app.ini"
+    mysql_root_password: "your_root_password"
+    gitea_db_name: "gitea"
+    gitea_db_user: "giteadb"
+    gitea_db_password: "password"
+
+  tasks:
+    - name: Extend logical volume
+      command: lvextend /dev/mapper/root_vg-var_lv -L 150G -r
+
+    - name: Copy Gitea binary from /vol1/gitea
+      copy:
+        src: "/vol1/gitea/gitea-{{ gitea_version }}-linux-amd64"
+        dest: "{{ gitea_bin }}"
+        mode: '0755'
+
+    - name: Create git group
+      group:
+        name: "{{ gitea_group }}"
+        system: yes
+
+    - name: Create git user
+      user:
+        name: "{{ gitea_user }}"
+        group: "{{ gitea_group }}"
+        system: yes
+        shell: /bin/bash
+        comment: "Git Version Control"
+        home: "{{ gitea_home }}"
+        create_home: yes
+
+    - name: Create Gitea directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ gitea_user }}"
+        group: "{{ gitea_group }}"
+        mode: '0750'
+      with_items:
+        - "{{ gitea_work_dir }}/custom"
+        - "{{ gitea_work_dir }}/data"
+        - "{{ gitea_work_dir }}/log"
+
+    - name: Create /etc/gitea directory
+      file:
+        path: /etc/gitea
+        state: directory
+        owner: root
+        group: "{{ gitea_group }}"
+        mode: '0770'
+
+    - name: Create Gitea service file
+      copy:
+        dest: "{{ gitea_service }}"
+        content: |
+          [Unit]
+          Description=Gitea (Git with a cup of tea)
+          After=network.target
+
+          [Service]
+          RestartSec=2s
+          Type=simple
+          User={{ gitea_user }}
+          Group={{ gitea_group }}
+          WorkingDirectory={{ gitea_work_dir }}
+          ExecStart={{ gitea_bin }} web --config {{ gitea_config }}
+          Restart=always
+          Environment=USER={{ gitea_user }} HOME={{ gitea_work_dir }} GITEA_WORK_DIR={{ gitea_work_dir }}
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd
+      command: systemctl daemon-reload
+
+    - name: Enable and start Gitea service
+      systemd:
+        name: gitea
+        enabled: yes
+        state: started
+
+    - name: Install libcap
+      yum:
+        name: libcap
+        state: present
+
+    - name: Set capabilities for Gitea binary
+      command: setcap 'cap_net_bind_service=+ep' {{ gitea_bin }}
+
+    - name: Install MySQL server
+      yum:
+        name: mysql-server
+        state: present
+
+    - name: Start and enable MySQL service
+      systemd:
+        name: mysqld
+        enabled: yes
+        state: started
+
+    - name: Set MySQL root password
+      mysql_user:
+        name: root
+        host: localhost
+        password: "{{ mysql_root_password }}"
+        login_unix_socket: /var/lib/mysql/mysql.sock
+
+    - name: Create Gitea database
+      mysql_db:
+        name: "{{ gitea_db_name }}"
+        encoding: utf8mb4
+        collation: utf8mb4_unicode_ci
+        state: present
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: Create Gitea database user
+      mysql_user:
+        name: "{{ gitea_db_user }}"
+        password: "{{ gitea_db_password }}"
+        priv: "{{ gitea_db_name }}.*:ALL"
+        state: present
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    - name: Flush MySQL privileges
+      mysql_user:
+        name: "{{ gitea_db_user }}"
+        state: present
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+        host_all: yes
+
+    - name: Secure Gitea configuration file
+      file:
+        path: "{{ gitea_config }}"
+        mode: '0660
